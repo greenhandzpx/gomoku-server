@@ -1,6 +1,7 @@
 use std::{env, io::Error};
 
-use futures_util::{future, StreamExt, TryStreamExt, SinkExt};
+// use futures_util::{future, StreamExt, TryStreamExt, SinkExt};
+use game::{Player, check_waiting_player};
 use log::{info, debug};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{tungstenite::handshake::server::{Request, Response}, accept_hdr_async};
@@ -40,32 +41,19 @@ async fn accept_connection(stream: TcpStream) {
 
         Ok(response)
     };
-    let mut ws_stream = accept_hdr_async(stream, callback)
+    let ws_stream = accept_hdr_async(stream, callback)
         .await
         .expect("Error during the websocket handshake occurred");
 
-    while let Some(msg) = ws_stream.next().await {
-        let msg = msg.unwrap();
-        if msg.is_text() || msg.is_binary() {
-            println!("Server on message: {:?}", &msg);
-            ws_stream.send(msg).await.unwrap();
-        }
-    }
+    let player = Player::new(ws_stream);
+    check_waiting_player(player).await;
 
-    // let addr = stream.peer_addr().expect("connected streams should have a peer address");
-    // info!("Peer address: {}", addr);
-    // println!("Peer address: {}", addr);
+    // while let Some(msg) = ws_stream.next().await {
+    //     let msg = msg.unwrap();
+    //     if msg.is_text() || msg.is_binary() {
+    //         println!("Server on message: {:?}", &msg);
+    //         ws_stream.send(msg).await.unwrap();
+    //     }
+    // }
 
-    // let ws_stream = tokio_tungstenite::accept_async(stream)
-    //     .await
-    //     .expect("Error during the websocket handshake occurred");
-
-    // info!("New WebSocket connection: {}", addr);
-
-    // let (write, read) = ws_stream.split();
-    // // We should not forward messages other than text or binary.
-    // read.try_filter(|msg| future::ready(msg.is_text() || msg.is_binary()))
-    //     .forward(write)
-    //     .await
-    //     .expect("Failed to forward messages")
 }
