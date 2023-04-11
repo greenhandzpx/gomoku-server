@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, sync::{Arc}};
 use futures_util::{StreamExt, SinkExt};
 use log::{error, info};
 use once_cell::sync::Lazy;
+use serde::{Serialize, Deserialize};
 use tokio::{net::TcpStream, sync::{Mutex, mpsc}};
 use tokio_tungstenite::WebSocketStream;
 
@@ -97,8 +98,25 @@ pub struct Player {
 
 pub struct MoveMsg {
     is_win: bool,
-    // x: usize,
-    // y: usize
+    x: usize,
+    y: usize
+}
+
+
+
+#[derive(Serialize, Deserialize)]
+pub struct CSMsg {
+    x: usize,
+    y: usize,
+    turn: i32,
+    msg_type: String,
+}
+
+pub enum MsgType {
+    Start, 
+    Moving,
+    Win,
+    Fail,
 }
 
 impl Player {
@@ -122,9 +140,37 @@ impl Player {
 
     pub async fn run(&mut self) {
 
-        self.ws.send("start".into()).await.unwrap();
+        // self.ws.send("start".into()).await.unwrap();
+        let cs_msg = CSMsg {
+            x: 0,
+            y: 0,
+            turn: self.id,
+            msg_type: "start".to_string(),
+        };
+        let msg = serde_json::to_string(&cs_msg).unwrap();
+        info!("player {} start", self.id);
+        self.ws.send(msg.into()).await.unwrap();
+
+        if self.id == 2 {
+            // Awaken by another player(because of his move)
+            let opposite_msg = self.recv_ch.as_mut().unwrap().recv().await.unwrap();
+
+            if opposite_msg.is_win {
+                self.ws.send("fail".into()).await.unwrap();
+            } else {
+                let cs_msg = CSMsg {
+                    x: opposite_msg.x,
+                    y: opposite_msg.y,
+                    turn: 0,
+                    msg_type: "moving".to_string(),
+                };
+                let msg = serde_json::to_string(&cs_msg).unwrap();
+                self.ws.send(msg.into()).await.unwrap();
+            }
+        }
         
         while let Some(msg) = self.ws.next().await {
+            info!("receive player {}", self.id);
             let msg = msg.unwrap();
             if msg.is_text() || msg.is_binary() {
 
@@ -135,45 +181,58 @@ impl Player {
                 let locs: Vec<&str> = msg_str.split(SERERATOR).collect();
                 assert_eq!(locs.len(), 2);
 
-                // Check validity
+                // // Check validity
                 let x = locs[0].parse::<usize>().unwrap();
                 let y = locs[1].parse::<usize>().unwrap();
 
-                if !self.valid(x, y).await {
-                    self.ws.send("error".into()).await.unwrap();
-                    continue;
-                }
+                // if !self.valid(x, y).await {
+                //     self.ws.send("error".into()).await.unwrap();
+                //     continue;
+                // }
 
-                // Modify chess board
-                self.chess_board.lock().await.board[x][y] = self.id;
+                // // Modify chess board
+                // self.chess_board.lock().await.board[x][y] = self.id;
 
-                // Check whether the player wins
-                // Inform the client
-                let is_win = self.check_win();
-                if is_win {
-                    self.ws.send("win".into()).await.unwrap();
-                } else {
-                    self.ws.send("ok".into()).await.unwrap();
-                }
+                // // Check whether the player wins
+                // // Inform the client
+                // let is_win = self.check_win();
+                // if is_win {
+                //     self.ws.send("win".into()).await.unwrap();
+                // } else {
+                //     self.ws.send("ok".into()).await.unwrap();
+                // }
 
                 // Inform the other player
-                if let Err(_) = self.send_ch.as_mut().unwrap().send(MoveMsg { is_win }).await {
+                let is_win = false;
+                if let Err(_) = self.send_ch.as_mut().unwrap().send(
+                    MoveMsg { is_win, x, y }
+                ).await {
                     error!("Send msg failed!!");
                 }
 
-                if is_win {
-                    break;
-                }
+                // if is_win {
+                //     break;
+                // }
+
                 // We don't need to worry about the client's error move
                 // since we will prevent that in the client side
                 // so we just wait here until the another player make a move
 
                 // Awaken by another player(because of his move)
-                let is_win = self.recv_ch.as_mut().unwrap().recv().await.unwrap();
+                let opposite_msg = self.recv_ch.as_mut().unwrap().recv().await.unwrap();
 
-                if is_win.is_win {
+                if opposite_msg.is_win {
                     self.ws.send("fail".into()).await.unwrap();
                     break;
+                } else {
+                    let cs_msg = CSMsg {
+                        x: opposite_msg.x,
+                        y: opposite_msg.y,
+                        turn: 0,
+                        msg_type: "moving".to_string(),
+                    };
+                    let msg = serde_json::to_string(&cs_msg).unwrap();
+                    self.ws.send(msg.into()).await.unwrap();
                 }
 
             }
