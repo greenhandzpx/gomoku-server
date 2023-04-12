@@ -12,7 +12,7 @@ mod game;
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let _ = env_logger::try_init();
-    let addr = env::args().nth(1).unwrap_or_else(|| "localhost:12345".to_string());
+    let addr = env::args().nth(1).unwrap_or_else(|| "0.0.0.0:12345".to_string());
 
     // Create the event loop and TCP listener we'll accept connections on.
     let try_socket = TcpListener::bind(&addr).await;

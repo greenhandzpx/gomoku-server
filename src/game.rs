@@ -90,6 +90,7 @@ impl ChessBoard {
 pub struct Player {
     id: i32,
     ws: WebSocketStream<TcpStream>,
+    name: String,
     chess_board: Arc<Mutex<ChessBoard>>,
     send_ch: Option<mpsc::Sender<MoveMsg>>,
     recv_ch: Option<mpsc::Receiver<MoveMsg>>,
@@ -98,6 +99,7 @@ pub struct Player {
 
 pub struct MoveMsg {
     is_win: bool,
+    name: String,
     x: usize,
     y: usize
 }
@@ -108,6 +110,7 @@ pub struct MoveMsg {
 pub struct CSMsg {
     x: usize,
     y: usize,
+    name: String,
     turn: i32,
     msg_type: String,
 }
@@ -126,6 +129,7 @@ impl Player {
             id: 0,
             ws,
             chess_board: Arc::new(Mutex::new(ChessBoard::new())),
+            name: String::new(),
             send_ch: None,
             recv_ch: None,
         }
@@ -140,16 +144,40 @@ impl Player {
 
     pub async fn run(&mut self) {
 
-        // self.ws.send("start".into()).await.unwrap();
+        // receive the username
+        if let Some(msg) = self.ws.next().await {
+            info!("[player {}] receive msg {:?}", self.id, &msg);
+            let msg = msg.unwrap().to_string();
+            self.name = msg;
+            let move_msg = MoveMsg {
+                is_win: false,
+                name: self.name.clone(),
+                x: 0,
+                y: 0,
+            };
+            // send username to the opposite
+            if let Err(_) = self.send_ch.as_mut().unwrap().send(move_msg).await {
+                error!("Send msg failed!!");
+            }
+        }
+
+        // wait for the opposite to send his name
+        let opposite_msg = self.recv_ch.as_mut().unwrap().recv().await.unwrap();
+        let opposite_name = opposite_msg.name;
+        info!("[player {}] receive opposite name {}", self.id, &opposite_name);
+
+        // send the `start` msg
         let cs_msg = CSMsg {
             x: 0,
             y: 0,
+            name: opposite_name,
             turn: self.id,
             msg_type: "start".to_string(),
         };
         let msg = serde_json::to_string(&cs_msg).unwrap();
         info!("player {} start", self.id);
         self.ws.send(msg.into()).await.unwrap();
+
 
         if self.id == 2 {
             // Awaken by another player(because of his move)
@@ -161,6 +189,7 @@ impl Player {
                 let cs_msg = CSMsg {
                     x: opposite_msg.x,
                     y: opposite_msg.y,
+                    name: self.name.clone(),
                     turn: 0,
                     msg_type: "moving".to_string(),
                 };
@@ -170,11 +199,11 @@ impl Player {
         }
         
         while let Some(msg) = self.ws.next().await {
-            info!("receive player {}", self.id);
             let msg = msg.unwrap();
+            info!("[player {}] receive msg {:?}", self.id, &msg);
             if msg.is_text() || msg.is_binary() {
 
-                println!("Server on message: {:?}", &msg);
+                // println!("Server on message: {:?}", &msg);
 
                 let msg_str = msg.to_string();
 
@@ -205,7 +234,7 @@ impl Player {
                 // Inform the other player
                 let is_win = false;
                 if let Err(_) = self.send_ch.as_mut().unwrap().send(
-                    MoveMsg { is_win, x, y }
+                    MoveMsg { is_win, x, y, name: "".to_string() }
                 ).await {
                     error!("Send msg failed!!");
                 }
@@ -228,9 +257,11 @@ impl Player {
                     let cs_msg = CSMsg {
                         x: opposite_msg.x,
                         y: opposite_msg.y,
+                        name: self.name.clone(),
                         turn: 0,
                         msg_type: "moving".to_string(),
                     };
+                    info!("[player {}] send ({} {}) to client", self.id, cs_msg.x, cs_msg.y);
                     let msg = serde_json::to_string(&cs_msg).unwrap();
                     self.ws.send(msg.into()).await.unwrap();
                 }
